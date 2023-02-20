@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from itertools import repeat
+from torchsummary import summary
 
 
 def conv_block(in_ch, out_ch, kernel_size, padding, activation=True):
@@ -101,9 +102,8 @@ class DimReduction_1(nn.Module):
         input dims: (channel_size=4, data_size=500)
         output dims: (channel_size=1, )
         """
-        input = self.batchnorm(x)
-
-        output1 = self.conv1_1(input)
+        output1 = self.batchnorm(x)
+        output1 = self.conv1_1(output1)
         output1 = self.conv1_2(output1)
         output2 = self.conv1_3(output1)
         output2 = self.conv1_4(output2)
@@ -138,7 +138,7 @@ class DimReduction_2(nn.Module):
         super(DimReduction_2, self).__init__()
         self.batchnorm = nn.BatchNorm1d(num_features=4)
         self.conv1_1 = conv_block(in_ch, 128, kernel_size=11, padding=5) # 500->500
-        self.conv2_1 = conv_block(128, 128, kernel_size=11, padding=5) # 500->500
+        self.conv1_2 = conv_block(128, 128, kernel_size=11, padding=5) # 500->500
         self.conv1_3 = conv_block(128, 128, kernel_size=5, padding=2) # 500->500
         self.conv1_4 = conv_block(128, 128, kernel_size=5, padding=2) # 500->500
         self.avgpool1_1 = nn.AvgPool1d(2, 2) # 500->250
@@ -170,9 +170,8 @@ class DimReduction_2(nn.Module):
                     nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
-        input = self.batchnorm(x)
-
-        output1 = self.conv1_1(input)
+        output1 = self.batchnorm(x)
+        output1 = self.conv1_1(output1)
         output1 = self.conv1_2(output1)
         output2 = self.conv1_3(output1)
         output2 = self.conv1_4(output2)
@@ -184,12 +183,20 @@ class DimReduction_2(nn.Module):
         output3 = self.conv2_2(output3)
         output4 = self.conv2_3(output3)
         output4 = self.conv2_4(output4)
+        output3 = self.maxpool2_1(output3)
+        output4 = self.maxpool2_2(output4)
         output5 = self.avgpool2_1(torch.cat((output3, output4), dim=1))
         output5 = torch.add(self.glbavgpool(output5), self.glbmaxpool(output5))
         output = self.linear(torch.squeeze(output5))
 
         return output
 
+
+if __name__ == "__main__":
+    # model1 = DimReduction_1().cuda()
+    # summary(model1, (4, 500))
+    model2 = DimReduction_2().cuda()
+    summary(model2, (4, 500))
         
 
 
