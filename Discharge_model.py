@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from itertools import repeat
+from torchsummary import summary
 
 
 def conv_block(in_ch, out_ch, kernel_size, padding, activation=True):
@@ -101,9 +102,7 @@ class DimReduction_1(nn.Module):
         input dims: (channel_size=4, data_size=500)
         output dims: (channel_size=1, )
         """
-        input = self.batchnorm(x)
-
-        output1 = self.conv1_1(input)
+        output1 = self.conv1_1(x)
         output1 = self.conv1_2(output1)
         output2 = self.conv1_3(output1)
         output2 = self.conv1_4(output2)
@@ -138,7 +137,7 @@ class DimReduction_2(nn.Module):
         super(DimReduction_2, self).__init__()
         self.batchnorm = nn.BatchNorm1d(num_features=4)
         self.conv1_1 = conv_block(in_ch, 128, kernel_size=11, padding=5) # 500->500
-        self.conv2_1 = conv_block(128, 128, kernel_size=11, padding=5) # 500->500
+        self.conv1_2 = conv_block(128, 128, kernel_size=11, padding=5) # 500->500
         self.conv1_3 = conv_block(128, 128, kernel_size=5, padding=2) # 500->500
         self.conv1_4 = conv_block(128, 128, kernel_size=5, padding=2) # 500->500
         self.avgpool1_1 = nn.AvgPool1d(2, 2) # 500->250
@@ -170,9 +169,7 @@ class DimReduction_2(nn.Module):
                     nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
-        input = self.batchnorm(x)
-
-        output1 = self.conv1_1(input)
+        output1 = self.conv1_1(x)
         output1 = self.conv1_2(output1)
         output2 = self.conv1_3(output1)
         output2 = self.conv1_4(output2)
@@ -184,13 +181,74 @@ class DimReduction_2(nn.Module):
         output3 = self.conv2_2(output3)
         output4 = self.conv2_3(output3)
         output4 = self.conv2_4(output4)
+        output3 = self.maxpool2_1(output3)
+        output4 = self.maxpool2_2(output4)
         output5 = self.avgpool2_1(torch.cat((output3, output4), dim=1))
         output5 = torch.add(self.glbavgpool(output5), self.glbmaxpool(output5))
         output = self.linear(torch.squeeze(output5))
 
         return output
 
+
+class Predictor_1(nn.Module):
+    def __init__(self, in_ch=8, out_ch=1, drop=0.16):
+        super(Predictor_1, self).__init__()
+        self.conv1 = nn.Sequential(
+            conv_block(in_ch, 64, kernel_size=11, padding=5),
+            conv_block(64, 128, kernel_size=7, padding=3),
+            conv_block(128, 256, kernel_size=5, padding=2)
+        )
+        self.spatial_drop1 = SpatialDropout(drop)
+        self.avgpool1 = nn.AvgPool1d(2, 2)
+
+        self.conv2_1 = conv_block(256, 64, kernel_size=11, padding=5)
+        self.conv2_2 = conv_block(256, 64, kernel_size=7, padding=3)
+        self.act1 = nn.Sigmoid()
+        self.glbavgpool1_1 = nn.AdaptiveAvgPool1d(1)
+        self.glbavgpool1_2 = nn.AdaptiveAvgPool1d(1)
+        self.conv3 = nn.Sequential(
+            conv_block(1, 64, kernel_size=9, padding=0),
+            conv_block(64, 32, kernel_size=7, padding=0),
+            conv_block(32, 128, kernel_size=7, padding=0)
+        )
+        self.glbavgpool2_1 = nn.AdaptiveAvgPool1d(1)
+        self.glbmaxpool2_1 = nn.AdaptiveMaxPool1d(1)
+        self.conv4 = nn.Sequential(
+            conv_block(1, 128, kernel_size=7, padding=0),
+            conv_block(128, 256, kernel_size=11, padding=0),
+            conv_block(256, 256, kernel_size=3, padding=0)
+        )
+        self.glbavgpool2_2 = nn.AdaptiveAvgPool1d(1)
+        self.glbmaxpool2_2 = nn.AdaptiveMaxPool1d(1)
         
+        self.linear1 = nn.Linear(128, out_ch)
+        self.linear2 = nn.Linear(256, out_ch)
+    
+    def forward(self, x):
+        output1 = self.conv1(x)
+        output1 = self.spatial_drop1(output1)
+        output1 = self.avgpool1(output1)
+        output2 = self.conv2_1(output1)
+        output3 = self.conv2_2(output1)
+        output3 = self.act1(torch.matmul(torch.transpose(output2, 1, 2), output3)) # (n, 100, 8) dot (n, 8, 100)
+        output2 = self.glbavgpool1_1(output2)
+        output3 = self.glbavgpool1_2(output3)
+        output4 = torch.cat((output2, output3), dim=1).squeeze().unsqueeze(1)
+        output5 = self.conv3(output4)
+        output6 = self.conv4(output4)
+        output5 = torch.add(self.glbavgpool2_1(output5), self.glbmaxpool2_1(output5)).squeeze()
+        output6 = torch.add(self.glbavgpool2_2(output6), self.glbmaxpool2_2(output6)).squeeze()
+        output_eol = self.linear1(output5)
+        output_ct = self.linear2(output6)
+        output = torch.cat((output_eol, output_ct), dim=1)
+
+        return output
 
 
-
+if __name__ == "__main__":
+    # model1 = DimReduction_1().cuda()
+    # summary(model1, (4, 500))
+    # model2 = DimReduction_2().cuda()
+    # summary(model2, (4, 500))
+    predictor1 = Predictor_1().cuda()
+    summary(predictor1, (8, 100))
